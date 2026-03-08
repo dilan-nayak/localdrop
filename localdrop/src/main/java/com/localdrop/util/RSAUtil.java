@@ -31,6 +31,7 @@ public class RSAUtil
 {
   // 🔐 Path where private key is stored
   private static final String PRIVATE_KEY_FILE = "config/private.key";
+  private static final String CONFIG_DIR = "config";
 
   // Generates or loads the RSA key pair
   private static KeyPair keyPair = generateKeyPair ();
@@ -43,6 +44,11 @@ public class RSAUtil
   {
     try
     {
+      File configDir = new File ( CONFIG_DIR );
+      if ( !configDir.exists () )
+      {
+        configDir.mkdirs ();
+      }
       if ( new File ( PRIVATE_KEY_FILE ).exists () )
       {
         // 🔁 Load existing key pair from file
@@ -112,6 +118,11 @@ public class RSAUtil
    */
   public static void savePeerKey ( String key )
   {
+    File configDir = new File ( CONFIG_DIR );
+    if ( !configDir.exists () )
+    {
+      configDir.mkdirs ();
+    }
     try ( FileWriter writer = new FileWriter ("config/peer_public.key" ) )
     {
       writer.write ( key );

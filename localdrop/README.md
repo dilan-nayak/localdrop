@@ -1,145 +1,97 @@
-# 🔒 LocalDrop: Secure LAN-based File & Clipboard Sharing
+# LocalDrop
 
-LocalDrop is a full-stack cross-platform file and clipboard sharing app that works entirely on your **local network** without needing the Internet or cloud. Think of it as your private, secure AirDrop + LAN chat for macOS, Windows, and Linux!
+LocalDrop is a local-network sharing app for encrypted file transfer and real-time chat. It is designed to work inside the same Wi-Fi, LAN, or hotspot network without cloud dependency. A single Spring Boot server hosts both the backend APIs and the web UI, and multiple devices can join using the server IP and port.
 
----
+## Motivation
 
-## 🚀 Features
+I built this project mainly to learn how real-time communication works using WebSockets, similar to chat systems like WhatsApp at a conceptual level. I also wanted to understand how backend services, browser clients, and network events stay synchronized in live communication flows. Along the way, I explored secure file transfer patterns using hybrid encryption (AES for file content and RSA for key exchange).
 
-| Feature                      | Description                                                                 |
-|------------------------------|-----------------------------------------------------------------------------|
-| 📂 File Upload & Download    | Share files with AES-256 encryption and RSA-4096 secure key exchange        |
-| 💬 Clipboard Sync (Chat)     | Real-time LAN chat using WebSocket for sharing clipboard or text            |
-| 🔐 End-to-End Encryption     | AES-256 for file content, RSA-4096 for key exchange                         |
-| 🌐 Local-Only Access         | No cloud or internet required; all traffic stays inside your LAN            |
-| 📡 Peer Discovery (Planned)  | Placeholder for mDNS device discovery (like AirDrop)                        |
-| 📜 Public Key Sharing        | Displays your RSA public key for peer encryption                            |
-| ♻️ Auto Refresh              | Files auto-refresh in all connected peers after upload                      |
-| 📱 Browser Interface         | Fully responsive UI built with Bootstrap 5                                  |
+## UI Preview
 
----
+![LocalDrop UI Preview](./docs/images/localdrop.png)
 
-## 🏗️ Project Structure
+## Tech Stack
 
-```
-localdrop/
-├── backend/
-│   ├── config/                 # WebSocket configuration
-│   ├── controller/             # REST & WebSocket endpoints
-│   ├── model/                  # Data model classes
-│   ├── service/                # Core logic (encryption, file I/O, messaging)
-│   ├── util/                   # Crypto utilities (AES/RSA/mDNS)
-│   ├── repository/             # (Optional for DB support)
-│   └── storage/                # Encrypted file store (.data/.key)
-│   └── config/                 # Private/public keys
-│   └── LocalDropApplication.java
-│   └── pom.xml                 # Maven dependencies
-├── frontend/
-│   ├── app.html                # Main UI
-│   ├── assets/
-│   │   ├── js/main.js          # Upload, chat, refresh
-│   │   ├── css/style.css       # Custom styling
-├── run.sh / run.bat           # Startup scripts
-├── README.md                  # You're reading it ;)
-```
+The backend uses Java 17+ with Spring Boot, Spring Web, and Spring WebSocket. The frontend is plain HTML, CSS, and JavaScript served from Spring static resources. Cryptography uses Java Crypto APIs with RSA and AES. Build and dependency management are handled with Maven.
 
----
+## Encryption Details and Definitions
 
-## ⚙️ How It Works (Flow)
+This project uses **hybrid encryption**, which means two algorithms are used together to balance speed and secure key exchange. The actual file content is encrypted with AES, and the AES key is encrypted with RSA. This is a standard pattern used in many secure systems because RSA alone is expensive for large data, while AES is fast for large binary files.
 
-When two or more devices on the same Wi-Fi network open LocalDrop in their browsers, each of them connects to their own local Spring Boot server running on their machine. The main web interface (`app.html`) loads using plain HTML + Bootstrap, and its interactivity is driven by `main.js`. When a user wants to share a file, they paste the peer's public RSA key and either drag a file or select one manually. This triggers the `handleFileUpload()` function in `main.js`, which sends a `POST` request to `/api/files/upload` handled by `FileController`. The controller delegates to `FileService`, which performs all encryption steps: it generates a unique AES-256 key to encrypt the file content, then encrypts that AES key using the peer's RSA-4096 public key. It stores both the encrypted file (`filename.data`) and the encrypted key (`filename.key`) in the `storage/` directory. After uploading, `FileService` broadcasts a message (`__REFRESH_FILES__`) using `ClipboardService` via WebSocket to all connected clients. When the frontend receives this refresh signal, it calls `/api/files/list` to update the list of available files. If a user wants to download a file, `main.js` sends a `GET` request to `/api/files/download/{filename}`, which triggers the decryption process in `FileService`. The server reads both encrypted file and AES key, decrypts the key using its own private RSA key, and decrypts the file using that AES key, then returns the file for download.
+**AES (Advanced Encryption Standard)** is a symmetric encryption algorithm. Symmetric means the same key is used to encrypt and decrypt data. In LocalDrop, a fresh AES key is generated per upload and used to encrypt file bytes before storage. This keeps the file payload protected at rest in `storage/*.data`.
 
-For clipboard syncing, each browser establishes a persistent WebSocket connection to `/clipboard`, managed by `ClipboardController` and `ClipboardService`. When a user sends a message from the chat box, the frontend sends it over WebSocket. The server receives it and rebroadcasts it to all other connected devices in real-time, where it's shown inside the chat log area. All public/private keys are handled using `RSAUtil`, and the AES operations are performed using `EncryptionUtil`. The private key is stored locally under `config/private.key`, and the peer’s public key is temporarily saved in `config/peer_public.key`. This system ensures that all file transfers are end-to-end encrypted using hybrid cryptography (RSA + AES), real-time updates happen via WebSocket, and all traffic is restricted to the local network for privacy and speed. In the future, the `mDNSUtil` utility can be used to discover peers automatically, just like AirDrop.
+**RSA (Rivest-Shamir-Adleman)** is an asymmetric encryption algorithm. Asymmetric means it uses a key pair: a public key (shareable) and a private key (secret). In LocalDrop, RSA is used to encrypt the generated AES key. That encrypted AES key is stored separately in `storage/*.key`. Only the matching private key can recover the AES key.
 
----
+**Public Key** in this project is the key you can share safely with peers. It is used only for encryption, not decryption. **Private Key** is stored locally (`config/private.key`) and must never be shared, because it is required to decrypt AES keys and therefore open encrypted files.
 
-## 🛡️ Security: Hybrid Encryption
+During upload, the server picks the effective target public key, generates AES key material, encrypts file data with AES, encrypts AES key with RSA, and writes both encrypted outputs. During download, the server decrypts the AES key using private RSA key and then decrypts file content with AES. This is why wrong or invalid target-key text causes upload errors: RSA public key parsing fails before secure key wrapping can complete.
 
-| Part                     | Algorithm        | File          |
-|--------------------------|------------------|---------------|
-| 🔐 AES Key Generation     | AES-256          | `EncryptionUtil.java`
-| 🔒 RSA Key Exchange       | RSA-4096         | `RSAUtil.java`
-| 🔐 File Encryption        | AES              | `FileService.java`
-| 📁 Private Key Storage    | Serialized file  | `config/private.key`
-| 📬 Peer Public Key        | Base64 string    | `config/peer_public.key`
+## Reliable Messaging and Tick Status
 
-> Files are never stored in plaintext. Keys are exchanged only using secure RSA.
+The chat layer now uses a typed WebSocket event protocol instead of plain text messages. Each chat message carries a `messageId`, `senderId`, `senderName`, `timestamp`, and `content`. The server maintains in-memory message state and tracks acknowledgements from recipients. This enables three delivery states for sender-side status rendering: `sent`, `delivered`, and `read`.
 
----
+The UI maps those states to WhatsApp-style ticks. A single gray tick (`✓`) means the message reached the server and was accepted (`sent`). A double gray tick (`✓✓`) means at least one intended recipient acknowledged receipt (`delivered`). A double blue tick (`✓✓` in blue) means recipients acknowledged read while the chat view was visible (`read`).
 
-## 🌍 LAN Setup
+When a client disconnects and reconnects, it sends a sync request with its last known timestamp. The server responds with missed messages and updated status snapshots. This allows old messages to move from single tick to double/blue tick later when an offline recipient comes back and acknowledges.
 
-1. Run the project on **each device** (Windows/Linux/macOS)
-2. Access it in browser: `http://<local-ip>:8080`
-3. Copy/paste public key to your peer
-4. Upload and download files with end-to-end encryption
-5. Chat using clipboard sync 💬
+## High-Level Design
 
----
+The system has three simple layers: the browser UI, the Spring Boot application layer, and local filesystem storage. Clients access `http://<server-ip>:8080`, then communicate with REST endpoints for file and key operations and with WebSocket for live messages. Files are stored in encrypted form under `storage/`, and runtime key material is managed in `config/`.
 
-## 🧪 Tech Stack
+The current operating model is single-server, multi-client. This means all connected devices talk to one running LocalDrop instance, which keeps chat session state in memory and keeps encrypted files on disk.
 
-- **Backend**: Java 17, Spring Boot, WebSocket
-- **Frontend**: HTML5, Bootstrap 5, JavaScript
-- **Encryption**: Java Cryptography (AES + RSA)
-- **Networking**: HTTP, WebSocket, mDNS (planned)
+## Low-Level Design
 
----
+`FileController` handles upload, list, and download requests and delegates logic to `FileService`. `FileService` encrypts uploaded files, stores `.data` and `.key` files, reads and decrypts files for download, and emits refresh events to connected clients. `KeyController` and `EncryptionService` expose and manage RSA public-key operations. `ClipboardController` and `ClipboardService` handle WebSocket event processing, session identity tracking, delivery/read acknowledgements, and bounded in-memory chat history. `ChatController` provides `/api/chat/history` and `/api/chat/sync` for refresh and reconnect recovery.
 
-## 🛠️ Developer Setup
+`RSAUtil` manages public/private key lifecycle and RSA operations, while `EncryptionUtil` handles AES key generation plus encryption and decryption helpers.
 
-### 1. Prerequisites
-- JDK 17+
-- Maven
+## Complete Flow (Start to End)
 
-### 2. Run the App
-```bash
-chmod +x run.sh
-./run.sh
-```
-Or on Windows:
-```bat
-run.bat
+When the server starts, Spring initializes REST APIs, static file serving, and the `/clipboard` WebSocket endpoint. When a user opens the page, the frontend loads file metadata, server public key, and chat history, then opens a WebSocket connection. The client identifies itself with a local device ID and nickname and sends a sync request to recover missed events.
+
+During file upload, the browser sends the file with an optional target public key. If target key is empty, backend falls back to the local server public key (single-server convenience). The server encrypts file bytes with AES, encrypts the AES key with RSA, saves encrypted artifacts, and broadcasts a refresh signal. Other clients receive this signal and refresh file list.
+
+During file download, the backend reads encrypted file and key artifacts, decrypts the AES key using local private key, decrypts file bytes, and returns the file response. During chat send, the server stores the message and marks it as `sent`, then delivers to recipients and updates state as acknowledgements arrive. Recipients send `delivery_ack` once rendered and `read_ack` when visible, allowing status progression to `delivered` and `read`. After refresh, the frontend fetches `/api/chat/history`; after reconnect, it requests sync so missed messages and older status updates are restored.
+
+## Public Key and Target Key Clarification
+
+`Your Public Key` is the server's public RSA key. `Target Public Key` is the key used to encrypt the AES file key for upload. In your current single-server use case, you can leave target key empty or click `Use My Key`. Upload fails only when an invalid key text is entered (for example `hi`) because it is not valid Base64 RSA key data.
+
+## Project Structure (Current)
+
+```text
+src/main/java/com/localdrop/
+  config/
+  controller/
+  model/
+  repository/
+  service/
+  util/
+src/main/resources/
+  application.properties
+  static/
+    index.html
+    assets/css/style.css
+    assets/js/main.js
+src/test/java/com/localdrop/
+storage/
 ```
 
-Access at: [http://localhost:8080](http://localhost:8080)
+## Running the Project
 
----
+Start from the module directory using `mvn spring-boot:run`. Open `http://localhost:8080` on the host machine. For another device, open `http://<host-local-ip>:8080` while both devices are on the same network and firewall rules allow port 8080.
 
-## 📦 Key Java Classes (Backend)
+## GitHub Push Safety
 
-| File                         | Description                                               |
-|------------------------------|-----------------------------------------------------------|
-| `FileController.java`        | Handles upload, list, download                            |
-| `FileService.java`           | Encrypts, saves, and decrypts files                       |
-| `ClipboardService.java`      | Broadcasts messages to WebSocket peers                   |
-| `EncryptionUtil.java`        | AES key generation and AES encryption                    |
-| `RSAUtil.java`               | RSA keypair generation, encryption, decryption           |
-| `WebSocketConfig.java`       | Configures `/clipboard` WebSocket endpoint               |
+Before pushing, make sure generated and runtime artifacts are not committed. Build output in `target/`, private key files in `config/`, and runtime encrypted payloads in `storage/` should stay local only. Source files, static assets, tests, and documentation are safe to push.
 
----
+## Learnings
 
-## 🧠 Developer Tips
+This project taught me practical WebSocket lifecycle handling, including connection setup, message broadcast, reconnection behavior, and refresh-safe history restoration. It also improved my understanding of end-to-end flow design where frontend state, backend service orchestration, and local network constraints must align for a smooth user experience.
 
-- Start building core logic in `service/` and `util/`
-- Test endpoints with Postman before doing frontend
-- Use WebSocket for real-time peer sync (no polling needed)
-- Customize styling via `style.css`
-- You can plug in mDNS later using libraries like `JmDNS`
+I also learned the importance of designing developer and user clarity together. Features like optional key fallback, clearer chat/file sync flow, and better UI structure reduce confusion and make the system easier to operate and explain.
 
----
+## License
 
-## ✨ Credits & Inspiration
-
-This project was designed with simplicity, privacy, and cross-platform LAN use in mind — inspired by apps like AirDrop, Snapdrop, and local-first tools.
-
-Built with ❤️ by [Dilan Nayak](https://github.com/your-profile)
-
----
-
-## 📃 License
-MIT License – free to use, learn, modify, and share.
-
----
-
-Need help running it or want to contribute? Open an issue or drop a message. Let's build local-first tech together! 💻📡
+MIT License.

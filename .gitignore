@@ -1,0 +1,16 @@
+.DS_Store
+.idea/
+
+# Maven build output
+localdrop/target/
+
+# Runtime-generated key material
+localdrop/config/private.key
+localdrop/config/peer_public.key
+
+# Runtime encrypted payloads
+localdrop/storage/*.data
+localdrop/storage/*.key
+
+# Runtime logs
+localdrop/*.log

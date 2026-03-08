@@ -37,6 +37,18 @@ public class ClipboardController extends TextWebSocketHandler
         this.clipboardService = clipboardService;
     }
 
+    @Override
+    public void afterConnectionEstablished(WebSocketSession session)
+    {
+        clipboardService.registerSession(session);
+    }
+
+    @Override
+    public void afterConnectionClosed(WebSocketSession session, org.springframework.web.socket.CloseStatus status)
+    {
+        clipboardService.unregisterSession(session);
+    }
+
     /**
      * 📩 Triggered when a WebSocket message is received from any connected client
      * @param session the client session that sent the message
@@ -45,6 +57,6 @@ public class ClipboardController extends TextWebSocketHandler
     @Override
     public void handleTextMessage( WebSocketSession session, TextMessage message )
     {
-        clipboardService.broadcastClipboard( session, message );
+        clipboardService.handleSocketPayload( session, message.getPayload() );
     }
 }
