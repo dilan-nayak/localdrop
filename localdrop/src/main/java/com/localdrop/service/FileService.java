@@ -7,7 +7,6 @@ import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.socket.TextMessage;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -58,14 +57,24 @@ public class FileService
     public String handleFileUpload( MultipartFile file, String targetPublicKey )
     {
         try {
+            ensureStorageDirExists();
+            if (file == null || file.isEmpty())
+            {
+                return "Upload failed: Please choose a file.";
+            }
+
+            String effectiveTargetKey = ( targetPublicKey == null || targetPublicKey.isBlank() )
+                    ? RSAUtil.getBase64PublicKey()
+                    : targetPublicKey.trim();
+
             // 🔐 Step 1: Generate AES key and encrypt the file content
             byte[] aesKey = EncryptionUtil.generateAESKey();
             byte[] encryptedFile = EncryptionUtil.encryptWithAES( file.getBytes(), aesKey );
             // 🔐 Step 2: Encrypt AES key using peer's RSA public key
-            byte[] encryptedKey = RSAUtil.encryptRSA( aesKey, targetPublicKey );
+            byte[] encryptedKey = RSAUtil.encryptRSA( aesKey, effectiveTargetKey );
 
             // 💾 Step 3: Save both encrypted file and encrypted key
-            String fileBase = file.getOriginalFilename();
+            String fileBase = new File(file.getOriginalFilename()).getName();
             try ( FileOutputStream fos = new FileOutputStream( SHARED_DIR + fileBase + ".data" ) )
             {
                 fos.write(encryptedFile);
@@ -76,7 +85,7 @@ public class FileService
             }
 
             // 🔔 Step 4: Notify all peers to refresh their file list
-            clipboardService.broadcastClipboard(null, new TextMessage("__REFRESH_FILES__"));
+            clipboardService.broadcastFileRefresh();
 
 
             return "File uploaded and encrypted successfully.";
@@ -84,7 +93,7 @@ public class FileService
         catch ( Exception e )
         {
             e.printStackTrace();
-            return "Upload failed.";
+            return "Upload failed: " + e.getMessage();
         }
     }
 
@@ -97,6 +106,7 @@ public class FileService
      */
     public Resource getDecryptedFile(String filename) {
         try {
+            ensureStorageDirExists();
             // 🗂 Read encrypted data and encrypted AES key
             byte[] encryptedFile = Files.readAllBytes( new File( SHARED_DIR + filename + ".data" ).toPath() );
             byte[] encryptedKey = Files.readAllBytes( new File( SHARED_DIR + filename + ".key" ).toPath() );
@@ -129,6 +139,7 @@ public class FileService
      */
     public List< FileMetadata > listAllFiles()
     {
+        ensureStorageDirExists();
         File folder = new File( SHARED_DIR );
         File[] files = folder.listFiles( ( dir, name ) -> name.endsWith( ".data" ) );
 
@@ -143,5 +154,14 @@ public class FileService
             }
         }
         return list;
+    }
+
+    private void ensureStorageDirExists()
+    {
+        File dir = new File( SHARED_DIR );
+        if ( !dir.exists() )
+        {
+            dir.mkdirs();
+        }
     }
 }
